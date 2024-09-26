@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
+	"os"
 	"sync"
+	"time"
 )
 
 type Clock struct {
@@ -19,17 +22,26 @@ type NextMessage struct {
 	mutex sync.Mutex
 }
 
+type NextSeqNum struct {
+	SeqNum int
+	mutex  sync.Mutex
+}
+
 // DbSequential fornisce il servizio di gestione del db key-value.
 // Garantisce consistenza sequenziale, tramite multicast totalmente ordinato
 type DbSequential struct {
-	ID              int                   // ID univoco del server
-	DbStore         DbStore               // Store di coppie chiave-valore
-	MessageQueue    utils.MessageQueue    // Coda di messaggi mantenuta dal server
-	Clock           Clock                 // Clock scalare locale al server
-	Address         utils.ServerAddress   // Indirizzo della replica (con cui può essere contattata dalle altre repliche)
-	Addresses       []utils.ServerAddress // Indirizzi delle altre repliche del db
-	NextMessage     NextMessage           // Tiene traccia dell'ID da assegnare al prossimo messaggio costruito
-	AddressToClient utils.ServerAddress   // Indirizzo con cui il server è contattato dai client
+	ID                 int                         // ID univoco del server
+	DbStore            DbStore                     // Store di coppie chiave-valore
+	MessageQueue       utils.MessageQueue          // Coda di messaggi mantenuta dal server
+	Clock              Clock                       // Clock scalare locale al server
+	Address            utils.ServerAddress         // Indirizzo della replica (con cui può essere contattata dalle altre repliche)
+	Addresses          []utils.ServerAddress       // Indirizzi delle altre repliche del db
+	NextMessage        NextMessage                 // Tiene traccia dell'ID da assegnare al prossimo messaggio costruito
+	AddressToClient    utils.ServerAddress         // Indirizzo con cui il server è contattato dai client
+	FIFOQueues         map[int]*utils.MessageQueue // Mantiene per ogni replica una coda per gestire la ricezione FIFO order dei messaggi
+	ExpectedNextSeqNum map[int]*NextSeqNum         // Per ogni replica tiene traccia del numero di sequenza del messaggio successivo che deve ricevere da quella replica (comunicazione FIFO order)
+	NextSeqNum         NextSeqNum                  // Numero di sequenza da assegnare al prossimo messaggio (REQUEST o ACK) inviato dal server
+
 }
 
 type DbStore struct {
@@ -109,7 +121,6 @@ func (db *DbSequential) sendUpdate(op utils.Operation, key string, value string)
 
 	// Poiché a livello concettuale il sender invia il messaggio anche a se stesso, anche lui invia l' ACK a tutte le altre repliche
 	db.sendAck(update)
-
 }
 
 func (db *DbSequential) sendAck(msg utils.Message) {
@@ -137,6 +148,15 @@ func (db *DbSequential) sendAck(msg utils.Message) {
 
 // Invia un messaggio (REQUEST o ACK) alle altre repliche, simulando un ritardo di comunicazione
 func (db *DbSequential) sendMessage(msg utils.Message) {
+	// Assegna un numero di sequenza al messaggio da inviare
+	// In questo modo il receiver può processare i messaggi da questo sender nello stesso ordine di invio
+	// Il ritardo nella comunicazione è simulato inviando i messaggi allo scadere di un timer casuale
+	seqNum := db.getNextSeqNum()
+	msg.SeqNum = seqNum
+
+	//Simula il ritardo di comunicazione
+	simulateDelay()
+
 	for _, address := range db.Addresses {
 		conn, err := net.Dial("tcp", address.GetFullAddress())
 		if err != nil {
@@ -144,7 +164,6 @@ func (db *DbSequential) sendMessage(msg utils.Message) {
 		}
 
 		// Codifica il messaggio in json e lo invia al server
-		// NETWORKDELAY
 		encoder := json.NewEncoder(conn)
 		err = encoder.Encode(msg)
 		if err != nil {
@@ -168,8 +187,37 @@ func (db *DbSequential) getNextMessageID() int {
 	return nextID
 }
 
-// receive gestisce la ricezione di messaggi dalle altre repliche (che possono essere REQUEST o ACK)
-func (db *DbSequential) receive(conn net.Conn) {
+// getNextSeqNum produce il numero di sequenza del messaggio successivo propagato dal server
+func (db *DbSequential) getNextSeqNum() int {
+	db.NextSeqNum.mutex.Lock()
+	nextSeqNum := db.NextSeqNum.SeqNum
+	db.NextSeqNum.SeqNum++
+	db.NextSeqNum.mutex.Unlock()
+	return nextSeqNum
+}
+
+// checkExpectedSeqNum controlla se il numero di sequenza del messaggio ricevuto è quello atteso
+func (db *DbSequential) checkExpectedSeqNum(serverID int, msgSeqNum int) int {
+	db.ExpectedNextSeqNum[serverID].mutex.Lock()
+	expectedSeqNum := db.ExpectedNextSeqNum[serverID].SeqNum
+	if expectedSeqNum == msgSeqNum {
+		db.ExpectedNextSeqNum[serverID].SeqNum++
+		db.ExpectedNextSeqNum[serverID].mutex.Unlock()
+		return expectedSeqNum
+	}
+	db.ExpectedNextSeqNum[serverID].mutex.Unlock()
+	return -1
+}
+
+// updateExpectedSeqNum produce il numero di sequenza del messaggio successivo propagato dal server
+func (db *DbSequential) updateExpectedSeqNum(serverID int) {
+	db.ExpectedNextSeqNum[serverID].mutex.Lock()
+	db.ExpectedNextSeqNum[serverID].SeqNum++
+	db.ExpectedNextSeqNum[serverID].mutex.Unlock()
+}
+
+// handleConnection gestisce la ricezione dei messaggi tenendo conto della garanzia di comunicazione FIFO order
+func (db *DbSequential) handleConnection(conn net.Conn) {
 	defer func(conn net.Conn) {
 		err := conn.Close()
 		if err != nil {
@@ -186,9 +234,39 @@ func (db *DbSequential) receive(conn net.Conn) {
 		return
 	}
 
+	seqNum := msg.SeqNum
+	idSender := msg.ServerID
+
+	// Controlla se il messaggio ricevuto dal server idSender ha il numero di sequenza atteso
+	// se ha il numero di sequenza atteso il messaggio può essere ricevuto
+	if db.checkExpectedSeqNum(idSender, seqNum) != -1 {
+		db.receive(msg)
+		// Controlla se la ricezione in ordine del messaggio permette di processare i messaggi successivi in ordine FIFO
+		checkNextMessage := true
+		for checkNextMessage {
+			db.ExpectedNextSeqNum[idSender].mutex.Lock()
+			expectedSeqNum := db.ExpectedNextSeqNum[idSender].SeqNum
+			resultMessage := db.FIFOQueues[idSender].PopNextSeqNumMessage(expectedSeqNum)
+			if resultMessage != nil {
+				db.ExpectedNextSeqNum[idSender].SeqNum++
+				db.ExpectedNextSeqNum[idSender].mutex.Unlock()
+				db.receive(*resultMessage)
+			} else {
+				db.ExpectedNextSeqNum[idSender].mutex.Unlock()
+				checkNextMessage = false
+			}
+		}
+	} else {
+		//altrimenti il messaggio è inserito nella coda FIFO dei messaggi mandati dal sender idSender secondo il numero di sequenza
+		db.FIFOQueues[idSender].InsertFIFOMessage(msg)
+	}
+}
+
+// receive gestisce la ricezione di messaggi dalle altre repliche (che possono essere REQUEST o ACK)
+func (db *DbSequential) receive(msg utils.Message) {
 	// Stampa il messaggio ricevuto
-	fmt.Printf("\nRicevuto:\nID = %d\nDa = %d\nKey = %s\nValue = %s\nOperation = %s\nClock = %d\nType = %s\nServerID = %d\n",
-		msg.MessageID.ID, msg.MessageID.ServerId, msg.Key, msg.Value, msg.Op, msg.Clock, msg.Type, msg.ServerID)
+	//fmt.Printf("\nRicevuto:\nID = %d\nDa = %d\nKey = %s\nValue = %s\nOperation = %s\nClock = %d\nType = %s\nServerID = %d\n",
+	//	msg.MessageID.ID, msg.MessageID.ServerId, msg.Key, msg.Value, msg.Op, msg.Clock, msg.Type, msg.ServerID)
 
 	// aggiorna il clock sulla ricezione
 	db.updateClockOnReceive(msg.Clock)
@@ -206,34 +284,50 @@ func (db *DbSequential) receive(conn net.Conn) {
 	// controlla se l'arrivo di questo messaggio permette di processare il messaggio in testa alla coda
 	resultMessage := db.MessageQueue.PopMessage(db.ID, NumReplicas)
 	if resultMessage != nil {
+		if resultMessage.Type == utils.ACK {
+			fmt.Printf("Ho trovato un ACK\n")
+			return
+		}
+		// Dopo aver realizzato l'operazione contenuta nel messaggio provvede a eliminare tutti gli ACK associati dalla coda
+		db.MessageQueue.DeleteAck(resultMessage.MessageID.ID, resultMessage.MessageID.ServerId)
+		fmt.Printf("sto facendo op\n")
 		switch resultMessage.Op {
 		case utils.PUT:
 			db.putEntry(resultMessage.Key, resultMessage.Value)
 			fmt.Printf("\nPUT: %s %s\n", resultMessage.Key, resultMessage.Value)
-			// Iterazione sulla mappa e stampa di ogni chiave e valore
-			for key, value := range db.DbStore.Store {
-				fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
+			err := os.Stdout.Sync()
+			if err != nil {
+				return
 			}
+			// Iterazione sulla mappa e stampa di ogni chiave e valore
+			/*for key, value := range db.DbStore.Store {
+				fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
+			}*/
 		case utils.DELETE:
 			db.deleteEntry(resultMessage.Key)
 			fmt.Printf("\nDELETE: %s\n", resultMessage.Key)
+			err := os.Stdout.Sync()
+			if err != nil {
+				return
+			}
 			// Iterazione sulla mappa e stampa di ogni chiave e valore
-			for key, value := range db.DbStore.Store {
+			/*for key, value := range db.DbStore.Store {
 				if len(db.DbStore.Store) == 0 {
 					println("store vuoto")
 				} else {
 					fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
 				}
-			}
+			}*/
 		}
 
-		db.MessageQueue.PrintQueue()
+		//db.MessageQueue.PrintQueue()
 
-		// Dopo aver realizzato l'operazione contenuta nel messaggio provvede a eliminare tutti gli ACK associati dalla coda
-		db.MessageQueue.DeleteAck(resultMessage.MessageID.ID, resultMessage.MessageID.ServerId)
-
-		db.MessageQueue.PrintQueue()
+		//db.MessageQueue.PrintQueue()
 	}
+}
+
+func simulateDelay() {
+	time.Sleep(time.Duration(500+rand.Intn(1000)) * time.Millisecond) // ritardo tra 500ms e 1.5s
 }
 
 // putEntry inserisce una nuova entry nello store key-value.

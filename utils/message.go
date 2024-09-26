@@ -38,6 +38,7 @@ type Message struct {
 	Clock     int               `json:"clock"`
 	Type      MessageType       `json:"type"`
 	ServerID  int               `json:"server_id"` // ID del processo che propaga la REQUEST o l' ACK
+	SeqNum    int               `json:"seq_num"`   // Numero di sequenza che identifica l'ordine con cui partono i messaggi da un server
 }
 
 // MessageQueue rappresenta la coda di messaggi mantenuta da ogni server
@@ -74,6 +75,13 @@ func (mq *MessageQueue) PopMessage(idRequester int, numReplicas int) *Message {
 
 	// Estrae il messaggio in testa alla coda
 	headMessage := mq.messages[0]
+	for headMessage.Type == ACK {
+		mq.messages = mq.messages[1:]
+		if len(mq.messages) == 0 {
+			return nil
+		}
+		headMessage = mq.messages[0]
+	}
 
 	// Mappa per tracciare se abbiamo trovato almeno un messaggio con clock maggiore per ogni ServerID diverso
 	serverIDFound := make(map[int]bool)
@@ -91,6 +99,7 @@ func (mq *MessageQueue) PopMessage(idRequester int, numReplicas int) *Message {
 	if len(serverIDFound) == (numReplicas - 1) {
 		// Rimuovi il messaggio in testa
 		mq.messages = mq.messages[1:]
+
 		return &headMessage
 	}
 
@@ -117,6 +126,19 @@ func (mq *MessageQueue) DeleteAck(messageId int, serverId int) {
 	mq.messages = filteredMessages
 }
 
+// InsertFIFOMessage inserisce il messaggio in una coda ordinata per numero si sequenza
+// Questo permette di garantire comunicazione FIFO order per ogni coppia di server i-j
+func (mq *MessageQueue) InsertFIFOMessage(msg Message) {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+	mq.messages = append(mq.messages, msg)
+
+	// Ordinare la coda prima per numero di sequenza
+	sort.Slice(mq.messages, func(i, j int) bool {
+		return mq.messages[i].SeqNum < mq.messages[j].SeqNum
+	})
+}
+
 // PrintQueue stampa lo stato della coda
 func (mq *MessageQueue) PrintQueue() {
 	if len(mq.messages) == 0 {
@@ -125,4 +147,30 @@ func (mq *MessageQueue) PrintQueue() {
 	for _, msg := range mq.messages {
 		fmt.Printf("Message: %d, From: %d, Type: %s, Clock: %d, ProcessID: %d\n", msg.MessageID.ID, msg.MessageID.ServerId, msg.Type, msg.Clock, msg.ServerID)
 	}
+}
+
+// PopNextSeqNumMessage estrae il messaggio in testa alla coda se il numero di sequenza coincide con quello atteso
+func (mq *MessageQueue) PopNextSeqNumMessage(nextSeqNum int) *Message {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	// Verifica che ci sia almeno un messaggio in coda
+	if len(mq.messages) == 0 {
+		return nil // Non ci sono messaggi in coda
+	}
+
+	// Controlla se il SeqNum del messaggio in testa è uguale a nextSeqNum
+	if mq.messages[0].SeqNum == nextSeqNum {
+		// Estrae il messaggio in testa
+		message := mq.messages[0]
+
+		// Rimuove il messaggio dalla coda
+		mq.messages = mq.messages[1:]
+
+		// Ritorna il messaggio
+		return &message
+	}
+
+	// Se il SeqNum non corrisponde, non rimuovere nulla e ritorna nil
+	return nil
 }

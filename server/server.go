@@ -53,6 +53,23 @@ func main() {
 			IP:   "localhost",
 			Port: strconv.Itoa(BasePortToClient + serverIndex),
 		},
+		FIFOQueues:         make(map[int]*utils.MessageQueue),
+		ExpectedNextSeqNum: make(map[int]*NextSeqNum),
+		NextSeqNum: NextSeqNum{
+			SeqNum: 0,
+			mutex:  sync.Mutex{},
+		},
+	}
+
+	for i := 0; i < NumReplicas; i++ {
+		if i != serverIndex {
+			dbSequential.FIFOQueues[i] = &utils.MessageQueue{}
+			dbSequential.ExpectedNextSeqNum[i] = &NextSeqNum{
+				SeqNum: 0,
+				mutex:  sync.Mutex{},
+			}
+		}
+
 	}
 
 	//Configuro gli indirizzi delle altre repliche del db
@@ -71,7 +88,7 @@ func main() {
 	}
 	log.Printf("Replica listens on port %s", dbSequential.Address.Port)
 
-	// Gestisce richieste di update da parte delle altre repliche su una goroutine
+	// Gestisce richieste di update o ack da parte delle altre repliche su una goroutine
 	go func(listener net.Listener) {
 		for {
 			// Accetta la connessione
@@ -80,7 +97,7 @@ func main() {
 				fmt.Println("Errore nell'accettare la connessione:", err)
 				continue
 			}
-			go dbSequential.receive(conn)
+			go dbSequential.handleConnection(conn)
 		}
 	}(listener)
 
