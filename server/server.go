@@ -12,8 +12,8 @@ import (
 )
 
 const NumReplicas = 3
-const basePort = 12345
-const basePortToClient = 8080
+const BasePort = 12345
+const BasePortToClient = 8080
 
 func main() {
 	// recupera da riga di comando l'indice da assegnare al server lanciato
@@ -30,13 +30,15 @@ func main() {
 		return
 	}
 
-	// Usa l'indice come preferisci
 	fmt.Printf("Starting server instance with index: %d\n", serverIndex)
 
 	//Create an instance of struct which implements datastore interface
 	dbSequential := &DbSequential{
-		ID:           serverIndex,
-		Store:        map[string]string{},
+		ID: serverIndex,
+		DbStore: DbStore{
+			Store: make(map[string]string),
+			mutex: sync.Mutex{},
+		},
 		MessageQueue: utils.MessageQueue{},
 		Clock: Clock{
 			value: 0,
@@ -44,19 +46,19 @@ func main() {
 		},
 		Address: utils.ServerAddress{
 			IP:   "localhost",
-			Port: strconv.Itoa(basePort + serverIndex),
+			Port: strconv.Itoa(BasePort + serverIndex),
 		},
 		Addresses: []utils.ServerAddress{},
 		AddressToClient: utils.ServerAddress{
 			IP:   "localhost",
-			Port: strconv.Itoa(basePortToClient + serverIndex),
+			Port: strconv.Itoa(BasePortToClient + serverIndex),
 		},
 	}
 
 	//Configuro gli indirizzi delle altre repliche del db
 	for i := 0; i < NumReplicas; i++ {
 		if i != serverIndex {
-			newAddress := utils.ServerAddress{IP: "localhost", Port: strconv.Itoa(basePort + i)}
+			newAddress := utils.ServerAddress{IP: "localhost", Port: strconv.Itoa(BasePort + i)}
 			dbSequential.Addresses = append(dbSequential.Addresses, newAddress)
 		}
 	}

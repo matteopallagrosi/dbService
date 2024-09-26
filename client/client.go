@@ -11,9 +11,27 @@ import (
 	"strings"
 )
 
+const BasePort = 8080
+
 func main() {
+	// recupera da riga di comando l'indice del server da contattare
+	if len(os.Args) < 2 {
+		fmt.Println("Please provide an index as an argument.")
+		return
+	}
+
+	// Recupera l'indice passato da riga di comando
+	indexStr := os.Args[1]
+	serverIndex, err := strconv.Atoi(indexStr)
+	if err != nil {
+		fmt.Println("Invalid index:", indexStr)
+		return
+	}
+
+	fmt.Printf("Connecting to server: %d\n", BasePort+serverIndex)
+
 	// Connessione al server RPC
-	client, err := rpc.Dial("tcp", "localhost:8080")
+	client, err := rpc.Dial("tcp", "localhost:"+strconv.Itoa(BasePort+serverIndex))
 	if err != nil {
 		log.Fatal("Error in dialing: ", err)
 	}
@@ -87,9 +105,9 @@ func main() {
 
 			args.Key = key
 
-			err := client.Call("Datastore.Put", args, &reply)
+			err := client.Call("Datastore.Delete", args, &reply)
 			if err != nil {
-				log.Fatal("Error while executing PUT:", err)
+				log.Fatal("Error while executing DELETE:", err)
 			}
 
 			fmt.Print("Risultato: " + reply.Value)

@@ -23,15 +23,21 @@ const (
 	ACK     MessageType = "ACK"
 )
 
+type MessageIdentifier struct {
+	ID       int `json:"id"`       // ID del messaggio univoco nella replica del db
+	ServerId int `json:"serverId"` // Identificatore del server, in cui l'ID del messaggio è univoco
+
+}
+
 // Message rappresenta struttura del messaggio di REQUEST o di ACK
 type Message struct {
-	ID       int         `json:"id"` // ID univoco del messaggio, permette di associare gli ACK alle REQUEST
-	Key      string      `json:"key"`
-	Value    string      `json:"value"`
-	Op       Operation   `json:"op"`
-	Clock    int         `json:"clock"`
-	Type     MessageType `json:"type"`
-	ServerID int         `json:"server_id"` // ID del processo che propaga la REQUEST o l' ACK
+	MessageID MessageIdentifier `json:"identifier"` // Identificatore univoco del messaggio, permette di associare gli ACK alle REQUEST
+	Key       string            `json:"key"`
+	Value     string            `json:"value"`
+	Op        Operation         `json:"op"`
+	Clock     int               `json:"clock"`
+	Type      MessageType       `json:"type"`
+	ServerID  int               `json:"server_id"` // ID del processo che propaga la REQUEST o l' ACK
 }
 
 // MessageQueue rappresenta la coda di messaggi mantenuta da ogni server
@@ -92,9 +98,31 @@ func (mq *MessageQueue) PopMessage(idRequester int, numReplicas int) *Message {
 	return nil
 }
 
+// DeleteAck rimuovere tutti gli ACK associati al messaggio con un dato ID, propagato a partire da un certo server.
+// Il confronto con ServerId è necessario in quanto i messageId sono univoci solo all'interno di ciascuna replica, non globalmente
+func (mq *MessageQueue) DeleteAck(messageId int, serverId int) {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	// Filtra i messaggi, rimuovendo quelli di tipo ACK con l' ID dato in ingresso
+	filteredMessages := mq.messages[:0] // Slice vuota con capacità originale
+
+	for _, msg := range mq.messages {
+		if !(msg.Type == ACK && msg.MessageID.ID == messageId && msg.MessageID.ServerId == serverId) {
+			filteredMessages = append(filteredMessages, msg)
+		}
+	}
+
+	// Aggiorna la coda con i messaggi filtrati
+	mq.messages = filteredMessages
+}
+
 // PrintQueue stampa lo stato della coda
 func (mq *MessageQueue) PrintQueue() {
+	if len(mq.messages) == 0 {
+		println("coda vuota")
+	}
 	for _, msg := range mq.messages {
-		fmt.Printf("Message: %d, Clock: %d, ProcessID: %d\n", msg.ID, msg.Clock, msg.ServerID)
+		fmt.Printf("Message: %d, From: %d, Type: %s, Clock: %d, ProcessID: %d\n", msg.MessageID.ID, msg.MessageID.ServerId, msg.Type, msg.Clock, msg.ServerID)
 	}
 }

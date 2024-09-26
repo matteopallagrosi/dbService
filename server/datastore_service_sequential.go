@@ -23,13 +23,18 @@ type NextMessage struct {
 // Garantisce consistenza sequenziale, tramite multicast totalmente ordinato
 type DbSequential struct {
 	ID              int                   // ID univoco del server
-	Store           map[string]string     // Store di coppie chiave-valore
+	DbStore         DbStore               // Store di coppie chiave-valore
 	MessageQueue    utils.MessageQueue    // Coda di messaggi mantenuta dal server
 	Clock           Clock                 // Clock scalare locale al server
 	Address         utils.ServerAddress   // Indirizzo della replica (con cui può essere contattata dalle altre repliche)
 	Addresses       []utils.ServerAddress // Indirizzi delle altre repliche del db
 	NextMessage     NextMessage           // Tiene traccia dell'ID da assegnare al prossimo messaggio costruito
 	AddressToClient utils.ServerAddress   // Indirizzo con cui il server è contattato dai client
+}
+
+type DbStore struct {
+	Store map[string]string // Store di coppie chiave-valore
+	mutex sync.Mutex
 }
 
 // Get recupera il valore corrispondente a una chiave
@@ -81,7 +86,10 @@ func (db *DbSequential) sendUpdate(op utils.Operation, key string, value string)
 
 	// costruisce un messaggio associato alla richiesta di update
 	update := utils.Message{
-		ID:       nextID,
+		MessageID: utils.MessageIdentifier{
+			ID:       nextID,
+			ServerId: db.ID,
+		},
 		Key:      key,
 		Value:    value,
 		Op:       op,
@@ -91,10 +99,17 @@ func (db *DbSequential) sendUpdate(op utils.Operation, key string, value string)
 	}
 
 	// Aggiunge il messaggio alla coda di messaggi, ordinata per clock (e serverID a parità di clock)
+	// A livello concettuale il sender invia il messaggio a se stesso
 	db.MessageQueue.AddMessage(update)
 
 	// Invia il messaggio alle altre repliche, simulando un ritardo di comunicazione
+	// A livello concettuale è come se il sender inviasse il messaggio anche a se stesso
+	// Nella pratica il sender non realizza l'invio del messaggio perché già lo possiede
 	db.sendMessage(update)
+
+	// Poiché a livello concettuale il sender invia il messaggio anche a se stesso, anche lui invia l' ACK a tutte le altre repliche
+	db.sendAck(update)
+
 }
 
 func (db *DbSequential) sendAck(msg utils.Message) {
@@ -102,9 +117,12 @@ func (db *DbSequential) sendAck(msg utils.Message) {
 	db.updateClockOnSend()
 
 	// Costruisce il messaggio di ACK da inviare alle altre repliche
-	// questo messaggio presenta come ID lo stesso ID del messaggio di cui realizza l' acknowledgment
+	// questo messaggio presenta come identificatore lo stesso identificatore del messaggio di cui realizza l' acknowledgment
 	ack := utils.Message{
-		ID:       msg.ID,
+		MessageID: utils.MessageIdentifier{
+			ID:       msg.MessageID.ID,
+			ServerId: msg.MessageID.ServerId,
+		},
 		Key:      "",
 		Value:    "",
 		Op:       "",
@@ -169,8 +187,8 @@ func (db *DbSequential) receive(conn net.Conn) {
 	}
 
 	// Stampa il messaggio ricevuto
-	fmt.Printf("\nRicevuto:\nID = %d\nKey = %s\nValue = %s\nOperation = %s\nClock = %d\nType = %s\nServerID = %d\n",
-		msg.ID, msg.Key, msg.Value, msg.Op, msg.Clock, msg.Type, msg.ServerID)
+	fmt.Printf("\nRicevuto:\nID = %d\nDa = %d\nKey = %s\nValue = %s\nOperation = %s\nClock = %d\nType = %s\nServerID = %d\n",
+		msg.MessageID.ID, msg.MessageID.ServerId, msg.Key, msg.Value, msg.Op, msg.Clock, msg.Type, msg.ServerID)
 
 	// aggiorna il clock sulla ricezione
 	db.updateClockOnReceive(msg.Clock)
@@ -188,6 +206,48 @@ func (db *DbSequential) receive(conn net.Conn) {
 	// controlla se l'arrivo di questo messaggio permette di processare il messaggio in testa alla coda
 	resultMessage := db.MessageQueue.PopMessage(db.ID, NumReplicas)
 	if resultMessage != nil {
-		//TODO devo eseguire l'operazione vera e propria
+		switch resultMessage.Op {
+		case utils.PUT:
+			db.putEntry(resultMessage.Key, resultMessage.Value)
+			fmt.Printf("\nPUT: %s %s\n", resultMessage.Key, resultMessage.Value)
+			// Iterazione sulla mappa e stampa di ogni chiave e valore
+			for key, value := range db.DbStore.Store {
+				fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
+			}
+		case utils.DELETE:
+			db.deleteEntry(resultMessage.Key)
+			fmt.Printf("\nDELETE: %s\n", resultMessage.Key)
+			// Iterazione sulla mappa e stampa di ogni chiave e valore
+			for key, value := range db.DbStore.Store {
+				if len(db.DbStore.Store) == 0 {
+					println("store vuoto")
+				} else {
+					fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
+				}
+			}
+		}
+
+		db.MessageQueue.PrintQueue()
+
+		// Dopo aver realizzato l'operazione contenuta nel messaggio provvede a eliminare tutti gli ACK associati dalla coda
+		db.MessageQueue.DeleteAck(resultMessage.MessageID.ID, resultMessage.MessageID.ServerId)
+
+		db.MessageQueue.PrintQueue()
 	}
+}
+
+// putEntry inserisce una nuova entry nello store key-value.
+// Se esiste già una entry nello store associata alla chiave data, il valore corrispondente viene aggiornato.
+func (db *DbSequential) putEntry(key string, value string) {
+	db.DbStore.mutex.Lock()
+	defer db.DbStore.mutex.Unlock()
+	db.DbStore.Store[key] = value
+}
+
+// deleteEntry rimuove la entry associata a una data chiave nello store key-value.
+// Se la chiave non esiste la delete non esegue alcuna operazione
+func (db *DbSequential) deleteEntry(key string) {
+	db.DbStore.mutex.Lock()
+	defer db.DbStore.mutex.Unlock()
+	delete(db.DbStore.Store, key)
 }
