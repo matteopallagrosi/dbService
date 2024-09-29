@@ -64,9 +64,9 @@ func connectToServer(serverIndex int) {
 	}
 }
 
-func main() {
+/*func main() {
 	for i := 0; i < NumClients; i++ {
 		go connectToServer(i)
 	}
 	select {}
-}
+}*/

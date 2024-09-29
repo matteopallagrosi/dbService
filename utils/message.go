@@ -75,6 +75,9 @@ func (mq *MessageQueue) PopMessage(idRequester int, numReplicas int) *Message {
 
 	// Estrae il messaggio in testa alla coda
 	headMessage := mq.messages[0]
+	// Se il messaggio è un ACK, per costruzione deve essere un ACK di un messaggio già processato arrivato in ritardo, quindi può essere scartato.
+	// La logica dell'algoritmo prevede che un ACK deve sempre avere un clock maggiore del messaggio di cui realizza l' acknowledgment.
+	// Quindi se l' ACK si trova in testa alla coda, il messaggio di REQUEST corrispondente doveva avere un clock inferiore, ed è quindi stato già estratto dalla coda.
 	for headMessage.Type == ACK {
 		mq.messages = mq.messages[1:]
 		if len(mq.messages) == 0 {
@@ -107,6 +110,32 @@ func (mq *MessageQueue) PopMessage(idRequester int, numReplicas int) *Message {
 	return nil
 }
 
+// PopGetMessage estrae il messaggio in testa solo se è di tipo GET
+func (mq *MessageQueue) PopGetMessage() *Message {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	// Verifica se ci sono messaggi nella coda
+	if len(mq.messages) == 0 {
+		return nil
+	}
+
+	// Prende il messaggio in testa
+	headMessage := mq.messages[0]
+
+	// Verifica se il messaggio in testa è di tipo GET
+	if headMessage.Op == GET {
+		// Rimuove il messaggio in testa dalla coda
+		mq.messages = mq.messages[1:]
+
+		// Ritorna il messaggio estratto
+		return &headMessage
+	}
+
+	// Se il messaggio in testa non è di tipo GET, ritorna nil
+	return nil
+}
+
 // DeleteAck rimuovere tutti gli ACK associati al messaggio con un dato ID, propagato a partire da un certo server.
 // Il confronto con ServerId è necessario in quanto i messageId sono univoci solo all'interno di ciascuna replica, non globalmente
 func (mq *MessageQueue) DeleteAck(messageId int, serverId int) {
@@ -114,7 +143,7 @@ func (mq *MessageQueue) DeleteAck(messageId int, serverId int) {
 	defer mq.mutex.Unlock()
 
 	// Filtra i messaggi, rimuovendo quelli di tipo ACK con l' ID dato in ingresso
-	filteredMessages := mq.messages[:0] // Slice vuota con capacità originale
+	filteredMessages := mq.messages[:0]
 
 	for _, msg := range mq.messages {
 		if !(msg.Type == ACK && msg.MessageID.ID == messageId && msg.MessageID.ServerId == serverId) {

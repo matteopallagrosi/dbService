@@ -7,7 +7,6 @@ import (
 	"log"
 	"math/rand"
 	"net"
-	"os"
 	"sync"
 	"time"
 )
@@ -44,14 +43,9 @@ type DbSequential struct {
 
 }
 
-type DbStore struct {
-	Store map[string]string // Store di coppie chiave-valore
-	mutex sync.Mutex
-}
-
 // Get recupera il valore corrispondente a una chiave
 func (db *DbSequential) Get(args utils.Args, result *utils.Result) error {
-	//TODO
+	db.handleGetRequest(args.Key)
 	return nil
 }
 
@@ -85,6 +79,43 @@ func (db *DbSequential) updateClockOnReceive(msgClock int) {
 	}
 	db.Clock.value++
 	db.Clock.mutex.Unlock()
+}
+
+// handleGetRequest gestisce la richiesta di GET da parte di un client.
+// Nel caso della GET, a differenza di PUT e DELETE, il server non deve propagare la richiesta alle altre repliche.
+// GET è considerato un evento interno al server.
+// Poiché la GET è un evento interno, e quindi non è un messaggio proveniente da un'altra replica, non può innescare la possibilità di processare un qualche messaggio nella coda.
+func (db *DbSequential) handleGetRequest(key string) {
+
+	// Incrementa il clock di 1 anche nel caso di evento interno
+	db.updateClockOnSend()
+
+	// Recupera l' ID del prossimo messaggio
+	nextID := db.getNextMessageID()
+
+	// costruisce un messaggio associato alla richiesta di GET
+	update := utils.Message{
+		MessageID: utils.MessageIdentifier{
+			ID:       nextID,
+			ServerId: db.ID,
+		},
+		Key:      key,
+		Op:       utils.GET,
+		Clock:    db.Clock.value,
+		Type:     utils.REQUEST,
+		ServerID: db.ID,
+	}
+
+	// Aggiunge il messaggio alla coda di messaggi, ordinata per clock (e serverID a parità di clock)
+	db.MessageQueue.AddMessage(update)
+
+	//Se il messaggio di GET è in testa alla coda può essere immediatamente processato
+	resultMessage := db.MessageQueue.PopGetMessage()
+	if resultMessage != nil {
+		// esegue l'operazione di GET richiesta
+		db.DbStore.getEntry(resultMessage.Key)
+		fmt.Printf("\nGET: %s\n", resultMessage.Key)
+	}
 }
 
 // sendUpdate propaga la richiesta di update (PUT o DELETE) verso gli altri processi
@@ -151,7 +182,7 @@ func (db *DbSequential) sendMessage(msg utils.Message) {
 	// Assegna un numero di sequenza al messaggio da inviare
 	// In questo modo il receiver può processare i messaggi da questo sender nello stesso ordine di invio
 	// Il ritardo nella comunicazione è simulato inviando i messaggi allo scadere di un timer casuale
-	seqNum := db.getNextSeqNum()
+	seqNum := db.NextSeqNum.getNextSeqNum()
 	msg.SeqNum = seqNum
 
 	//Simula il ritardo di comunicazione
@@ -188,11 +219,11 @@ func (db *DbSequential) getNextMessageID() int {
 }
 
 // getNextSeqNum produce il numero di sequenza del messaggio successivo propagato dal server
-func (db *DbSequential) getNextSeqNum() int {
-	db.NextSeqNum.mutex.Lock()
-	nextSeqNum := db.NextSeqNum.SeqNum
-	db.NextSeqNum.SeqNum++
-	db.NextSeqNum.mutex.Unlock()
+func (seqNum *NextSeqNum) getNextSeqNum() int {
+	seqNum.mutex.Lock()
+	nextSeqNum := seqNum.SeqNum
+	seqNum.SeqNum++
+	seqNum.mutex.Unlock()
 	return nextSeqNum
 }
 
@@ -284,40 +315,44 @@ func (db *DbSequential) receive(msg utils.Message) {
 	// controlla se l'arrivo di questo messaggio permette di processare il messaggio in testa alla coda
 	resultMessage := db.MessageQueue.PopMessage(db.ID, NumReplicas)
 	if resultMessage != nil {
-		if resultMessage.Type == utils.ACK {
-			fmt.Printf("Ho trovato un ACK\n")
-			return
-		}
-		// Dopo aver realizzato l'operazione contenuta nel messaggio provvede a eliminare tutti gli ACK associati dalla coda
-		db.MessageQueue.DeleteAck(resultMessage.MessageID.ID, resultMessage.MessageID.ServerId)
-		fmt.Printf("sto facendo op\n")
-		switch resultMessage.Op {
-		case utils.PUT:
-			db.putEntry(resultMessage.Key, resultMessage.Value)
-			fmt.Printf("\nPUT: %s %s\n", resultMessage.Key, resultMessage.Value)
-			err := os.Stdout.Sync()
-			if err != nil {
-				return
-			}
-			// Iterazione sulla mappa e stampa di ogni chiave e valore
-			/*for key, value := range db.DbStore.Store {
-				fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
-			}*/
-		case utils.DELETE:
-			db.deleteEntry(resultMessage.Key)
-			fmt.Printf("\nDELETE: %s\n", resultMessage.Key)
-			err := os.Stdout.Sync()
-			if err != nil {
-				return
-			}
-			// Iterazione sulla mappa e stampa di ogni chiave e valore
-			/*for key, value := range db.DbStore.Store {
-				if len(db.DbStore.Store) == 0 {
-					println("store vuoto")
-				} else {
+		if resultMessage.Type != utils.ACK {
+			// Dopo aver estratto il messaggio provvede a eliminare tutti gli ACK associati dalla coda
+			db.MessageQueue.DeleteAck(resultMessage.MessageID.ID, resultMessage.MessageID.ServerId)
+			fmt.Printf("sto facendo op\n")
+			switch resultMessage.Op {
+			case utils.GET:
+				db.DbStore.getEntry(resultMessage.Key)
+				fmt.Printf("\nGET: %s\n", resultMessage.Key)
+			case utils.PUT:
+				db.DbStore.putEntry(resultMessage.Key, resultMessage.Value)
+				fmt.Printf("\nPUT: %s %s\n", resultMessage.Key, resultMessage.Value)
+				// Iterazione sulla mappa e stampa di ogni chiave e valore
+				/*for key, value := range db.DbStore.Store {
 					fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
-				}
-			}*/
+				}*/
+			case utils.DELETE:
+				db.DbStore.deleteEntry(resultMessage.Key)
+				fmt.Printf("\nDELETE: %s\n", resultMessage.Key)
+				// Iterazione sulla mappa e stampa di ogni chiave e valore
+				/*for key, value := range db.DbStore.Store {
+					if len(db.DbStore.Store) == 0 {
+						println("store vuoto")
+					} else {
+						fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
+					}
+				}*/
+			}
+		}
+
+		// Controlla che in coda ci sia un messaggio di GET locale come messaggio successivo che può essere processato
+		// Essendo un evento interno al processo se è in testa alla coda sono sicuro che tutti gli eventi precedenti in ordine di programma sono stati eseguiti (perché lo precedevano nella coda)
+		// Questo permette di garantire che la GET venga processata anche quando non c'è un messaggio di REQUEST o ACK successivo
+		resultMessage = db.MessageQueue.PopGetMessage()
+		for resultMessage != nil {
+			// esegue l'operazione di GET richiesta
+			db.DbStore.getEntry(resultMessage.Key)
+			fmt.Printf("\nGET: %s\n", resultMessage.Key)
+			resultMessage = db.MessageQueue.PopGetMessage()
 		}
 
 		//db.MessageQueue.PrintQueue()
@@ -327,21 +362,5 @@ func (db *DbSequential) receive(msg utils.Message) {
 }
 
 func simulateDelay() {
-	time.Sleep(time.Duration(500+rand.Intn(1000)) * time.Millisecond) // ritardo tra 500ms e 1.5s
-}
-
-// putEntry inserisce una nuova entry nello store key-value.
-// Se esiste già una entry nello store associata alla chiave data, il valore corrispondente viene aggiornato.
-func (db *DbSequential) putEntry(key string, value string) {
-	db.DbStore.mutex.Lock()
-	defer db.DbStore.mutex.Unlock()
-	db.DbStore.Store[key] = value
-}
-
-// deleteEntry rimuove la entry associata a una data chiave nello store key-value.
-// Se la chiave non esiste la delete non esegue alcuna operazione
-func (db *DbSequential) deleteEntry(key string) {
-	db.DbStore.mutex.Lock()
-	defer db.DbStore.mutex.Unlock()
-	delete(db.DbStore.Store, key)
+	time.Sleep(time.Duration(500+rand.Intn(2000)) * time.Millisecond) // ritardo tra 500ms e 2s
 }
