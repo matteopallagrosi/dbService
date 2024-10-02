@@ -1,6 +1,6 @@
 package main
 
-import (
+/*import (
 	"dbService/utils"
 	"fmt"
 	"log"
@@ -76,7 +76,7 @@ func connectMultiClientsToServer(serverIndex int, clientIndex int) {
 
 }
 
-func main() {
+/*func main() {
 	clientIndex := 0
 	for i := 0; i < NumClients; i++ {
 		go connectMultiClientsToServer(i, clientIndex)
@@ -85,4 +85,4 @@ func main() {
 		clientIndex++
 	}
 	select {}
-}
+}*/

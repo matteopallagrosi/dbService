@@ -94,7 +94,7 @@ func (db *DbSequential) handleGetRequest(key string) {
 	nextID := db.getNextMessageID()
 
 	// costruisce un messaggio associato alla richiesta di GET
-	update := utils.Message{
+	getMessage := utils.Message{
 		MessageID: utils.MessageIdentifier{
 			ID:       nextID,
 			ServerId: db.ID,
@@ -107,7 +107,7 @@ func (db *DbSequential) handleGetRequest(key string) {
 	}
 
 	// Aggiunge il messaggio alla coda di messaggi, ordinata per clock (e serverID a parità di clock)
-	db.MessageQueue.AddMessage(update)
+	db.MessageQueue.AddMessage(getMessage)
 
 	//Se il messaggio di GET è in testa alla coda può essere immediatamente processato
 	resultMessage := db.MessageQueue.PopGetMessage()
@@ -227,24 +227,18 @@ func (seqNum *NextSeqNum) getNextSeqNum() int {
 	return nextSeqNum
 }
 
-// checkExpectedSeqNum controlla se il numero di sequenza del messaggio ricevuto è quello atteso
-func (db *DbSequential) checkExpectedSeqNum(serverID int, msgSeqNum int) int {
-	db.ExpectedNextSeqNum[serverID].mutex.Lock()
-	expectedSeqNum := db.ExpectedNextSeqNum[serverID].SeqNum
+// checkExpectedSeqNum controlla se il numero di sequenza del messaggio ricevuto è quello atteso.
+// In tal caso incrementa il numero di sequenza atteso per il messaggio successivo.
+func (seqNum *NextSeqNum) checkExpectedSeqNum(msgSeqNum int) int {
+	seqNum.mutex.Lock()
+	expectedSeqNum := seqNum.SeqNum
 	if expectedSeqNum == msgSeqNum {
-		db.ExpectedNextSeqNum[serverID].SeqNum++
-		db.ExpectedNextSeqNum[serverID].mutex.Unlock()
+		seqNum.SeqNum++
+		seqNum.mutex.Unlock()
 		return expectedSeqNum
 	}
-	db.ExpectedNextSeqNum[serverID].mutex.Unlock()
+	seqNum.mutex.Unlock()
 	return -1
-}
-
-// updateExpectedSeqNum produce il numero di sequenza del messaggio successivo propagato dal server
-func (db *DbSequential) updateExpectedSeqNum(serverID int) {
-	db.ExpectedNextSeqNum[serverID].mutex.Lock()
-	db.ExpectedNextSeqNum[serverID].SeqNum++
-	db.ExpectedNextSeqNum[serverID].mutex.Unlock()
 }
 
 // handleConnection gestisce la ricezione dei messaggi tenendo conto della garanzia di comunicazione FIFO order
@@ -270,7 +264,7 @@ func (db *DbSequential) handleConnection(conn net.Conn) {
 
 	// Controlla se il messaggio ricevuto dal server idSender ha il numero di sequenza atteso
 	// se ha il numero di sequenza atteso il messaggio può essere ricevuto
-	if db.checkExpectedSeqNum(idSender, seqNum) != -1 {
+	if db.ExpectedNextSeqNum[idSender].checkExpectedSeqNum(seqNum) != -1 {
 		db.receive(msg)
 		// Controlla se la ricezione in ordine del messaggio permette di processare i messaggi successivi in ordine FIFO
 		checkNextMessage := true
@@ -315,50 +309,50 @@ func (db *DbSequential) receive(msg utils.Message) {
 	// controlla se l'arrivo di questo messaggio permette di processare il messaggio in testa alla coda
 	resultMessage := db.MessageQueue.PopMessage(db.ID, NumReplicas)
 	if resultMessage != nil {
-		if resultMessage.Type != utils.ACK {
-			// Dopo aver estratto il messaggio provvede a eliminare tutti gli ACK associati dalla coda
+		// Dopo aver estratto il messaggio provvede a eliminare tutti gli ACK associati dalla coda (non presenti se il messaggio è una GET)
+		if resultMessage.Op != utils.GET {
 			db.MessageQueue.DeleteAck(resultMessage.MessageID.ID, resultMessage.MessageID.ServerId)
-			fmt.Printf("sto facendo op\n")
-			switch resultMessage.Op {
-			case utils.GET:
-				db.DbStore.getEntry(resultMessage.Key)
-				fmt.Printf("\nGET: %s\n", resultMessage.Key)
-			case utils.PUT:
-				db.DbStore.putEntry(resultMessage.Key, resultMessage.Value)
-				fmt.Printf("\nPUT: %s %s\n", resultMessage.Key, resultMessage.Value)
-				// Iterazione sulla mappa e stampa di ogni chiave e valore
-				/*for key, value := range db.DbStore.Store {
-					fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
-				}*/
-			case utils.DELETE:
-				db.DbStore.deleteEntry(resultMessage.Key)
-				fmt.Printf("\nDELETE: %s\n", resultMessage.Key)
-				// Iterazione sulla mappa e stampa di ogni chiave e valore
-				/*for key, value := range db.DbStore.Store {
-					if len(db.DbStore.Store) == 0 {
-						println("store vuoto")
-					} else {
-						fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
-					}
-				}*/
-			}
 		}
-
-		// Controlla che in coda ci sia un messaggio di GET locale come messaggio successivo che può essere processato
-		// Essendo un evento interno al processo se è in testa alla coda sono sicuro che tutti gli eventi precedenti in ordine di programma sono stati eseguiti (perché lo precedevano nella coda)
-		// Questo permette di garantire che la GET venga processata anche quando non c'è un messaggio di REQUEST o ACK successivo
-		resultMessage = db.MessageQueue.PopGetMessage()
-		for resultMessage != nil {
-			// esegue l'operazione di GET richiesta
+		fmt.Printf("sto facendo op\n")
+		switch resultMessage.Op {
+		case utils.GET:
 			db.DbStore.getEntry(resultMessage.Key)
 			fmt.Printf("\nGET: %s\n", resultMessage.Key)
-			resultMessage = db.MessageQueue.PopGetMessage()
+		case utils.PUT:
+			db.DbStore.putEntry(resultMessage.Key, resultMessage.Value)
+			fmt.Printf("\nPUT: %s %s\n", resultMessage.Key, resultMessage.Value)
+			// Iterazione sulla mappa e stampa di ogni chiave e valore
+			/*for key, value := range db.DbStore.Store {
+				fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
+			}*/
+		case utils.DELETE:
+			db.DbStore.deleteEntry(resultMessage.Key)
+			fmt.Printf("\nDELETE: %s\n", resultMessage.Key)
+			// Iterazione sulla mappa e stampa di ogni chiave e valore
+			/*for key, value := range db.DbStore.Store {
+				if len(db.DbStore.Store) == 0 {
+					println("store vuoto")
+				} else {
+					fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
+				}
+			}*/
 		}
-
 		//db.MessageQueue.PrintQueue()
 
 		//db.MessageQueue.PrintQueue()
 	}
+
+	// Controlla che in coda ci sia un messaggio di GET locale come messaggio successivo che può essere processato
+	// Essendo un evento interno al processo se è in testa alla coda sono sicuro che tutti gli eventi precedenti in ordine di programma sono stati eseguiti (perché lo precedevano nella coda)
+	// Questo permette di garantire che la GET venga processata anche quando non c'è un messaggio di REQUEST o ACK successivo
+	resultMessage = db.MessageQueue.PopGetMessage()
+	for resultMessage != nil {
+		// esegue l'operazione di GET richiesta
+		db.DbStore.getEntry(resultMessage.Key)
+		fmt.Printf("\nGET: %s\n", resultMessage.Key)
+		resultMessage = db.MessageQueue.PopGetMessage()
+	}
+
 }
 
 func simulateDelay() {

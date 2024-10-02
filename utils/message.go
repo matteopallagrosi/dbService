@@ -12,9 +12,9 @@ type MessageType string
 
 // Operazioni che possono essere richieste al server
 const (
-	GET    Operation = "GET"
-	PUT    Operation = "PUT"
-	DELETE Operation = "DELETE"
+	GET    Operation = "Get"
+	PUT    Operation = "Put"
+	DELETE Operation = "Delete"
 )
 
 // Operazioni che possono essere richieste al server

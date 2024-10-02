@@ -1,6 +1,22 @@
 package main
 
-import "sync"
+import (
+	"dbService/utils"
+	"sync"
+)
+
+// DataStore definisce il servizio messo a disposizione del client.
+// La consistenza può essere sequenziale o causale.
+type DataStore interface {
+	// Get recupera il valore corrispondente a una chiave
+	Get(args utils.Args, result *utils.Result) error
+
+	// Put inserisce una nuova coppia key-value, o aggiorna il valore corrente se la chiave già esiste
+	Put(args utils.Args, result *utils.Result) error
+
+	// Delete rimuove la entry corrispondente a una data chiave
+	Delete(args utils.Args, result *utils.Result) error
+}
 
 type DbStore struct {
 	Store map[string]string // Store di coppie chiave-valore
