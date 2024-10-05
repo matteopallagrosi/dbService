@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 )
 
 var (
@@ -17,6 +18,7 @@ var (
 	BasePort         int
 	BasePortToClient int
 	ConsistencyType  string
+	TimeoutDuration  = 20 * time.Second // Durata del timeout di inattività
 )
 
 func init() {
@@ -113,7 +115,7 @@ func main() {
 			},
 			MessageQueue: utils.VectorMessageQueue{},
 			Clock: VectorClock{
-				value: make([]int, 0),
+				value: make([]int, NumReplicas),
 				mutex: sync.Mutex{},
 			},
 			Address: utils.ServerAddress{
@@ -161,6 +163,30 @@ func main() {
 
 // startRPCServer avvia il server RPC, che potrà quindi essere contattato dai client
 func startRPCServer(dataStore DataStore) {
+	// Inizializza il timer di inattività
+	timer := time.NewTimer(TimeoutDuration)
+	resetTimer := func() {
+		if !timer.Stop() {
+			<-timer.C
+		}
+		timer.Reset(TimeoutDuration)
+	}
+
+	// Goroutine che ascolta lo scadere del timer
+	go func() {
+		<-timer.C
+		fmt.Println("Timeout reached, shutting down server...")
+
+		// Stampa il contenuto del datastore prima di terminare
+		if db, ok := dataStore.(*DbSequential); ok {
+			db.DbStore.printDbStore()
+		} else if db, ok := dataStore.(*DbCausal); ok {
+			db.DbStore.printDbStore()
+		}
+
+		os.Exit(0)
+	}()
+
 	if dbSequential, ok := dataStore.(*DbSequential); ok {
 		// Ogni replica si mette in ascolto di update da parte delle altre repliche
 		listener, err := net.Listen("tcp", dbSequential.Address.GetFullAddress())
@@ -179,6 +205,7 @@ func startRPCServer(dataStore DataStore) {
 					fmt.Println("Errore nell'accettare la connessione:", err)
 					continue
 				}
+				resetTimer()
 				go dbSequential.handleConnection(conn)
 			}
 		}(listener)
@@ -210,7 +237,7 @@ func startRPCServer(dataStore DataStore) {
 		// and serve requests for each incoming connection.
 		server.Accept(rpcListener)
 
-	} else if dbCausal, ok := dataStore.(*DbSequential); ok {
+	} else if dbCausal, ok := dataStore.(*DbCausal); ok {
 		// Ogni replica si mette in ascolto di update da parte delle altre repliche
 		listener, err := net.Listen("tcp", dbCausal.Address.GetFullAddress())
 		if err != nil {
@@ -228,6 +255,7 @@ func startRPCServer(dataStore DataStore) {
 					fmt.Println("Errore nell'accettare la connessione:", err)
 					continue
 				}
+				resetTimer()
 				go dbCausal.handleConnection(conn)
 			}
 		}(listener)

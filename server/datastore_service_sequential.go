@@ -3,7 +3,6 @@ package main
 import (
 	"dbService/utils"
 	"encoding/json"
-	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -45,7 +44,16 @@ type DbSequential struct {
 
 // Get recupera il valore corrispondente a una chiave
 func (db *DbSequential) Get(args utils.Args, result *utils.Result) error {
-	db.handleGetRequest(args.Key)
+	// Crea un canale per ricevere il risultato
+	responseChan := make(chan string)
+
+	// gestisce la richiesta di Get
+	go db.handleGetRequest(args.Key, responseChan)
+
+	// Aspetta la risposta tramite il canale
+	value := <-responseChan
+	result.Value = value
+
 	return nil
 }
 
@@ -67,6 +75,7 @@ func (db *DbSequential) Delete(args utils.Args, result *utils.Result) error {
 func (db *DbSequential) updateClockOnSend() {
 	db.Clock.mutex.Lock()
 	db.Clock.value++
+	//fmt.Printf("Incremento il clock di 1 sulla send, ora è %d\n", db.Clock.value)
 	db.Clock.mutex.Unlock()
 }
 
@@ -78,6 +87,7 @@ func (db *DbSequential) updateClockOnReceive(msgClock int) {
 		db.Clock.value = msgClock
 	}
 	db.Clock.value++
+	//fmt.Printf("Aggiorno il clock sulla ricezione, ora è %d\n", db.Clock.value)
 	db.Clock.mutex.Unlock()
 }
 
@@ -85,7 +95,7 @@ func (db *DbSequential) updateClockOnReceive(msgClock int) {
 // Nel caso della GET, a differenza di PUT e DELETE, il server non deve propagare la richiesta alle altre repliche.
 // GET è considerato un evento interno al server.
 // Poiché la GET è un evento interno, e quindi non è un messaggio proveniente da un'altra replica, non può innescare la possibilità di processare un qualche messaggio nella coda.
-func (db *DbSequential) handleGetRequest(key string) {
+func (db *DbSequential) handleGetRequest(key string, responseChan chan string) {
 
 	// Incrementa il clock di 1 anche nel caso di evento interno
 	db.updateClockOnSend()
@@ -99,11 +109,12 @@ func (db *DbSequential) handleGetRequest(key string) {
 			ID:       nextID,
 			ServerId: db.ID,
 		},
-		Key:      key,
-		Op:       utils.GET,
-		Clock:    db.Clock.value,
-		Type:     utils.REQUEST,
-		ServerID: db.ID,
+		Key:          key,
+		Op:           utils.GET,
+		Clock:        db.Clock.value,
+		Type:         utils.REQUEST,
+		ServerID:     db.ID,
+		ResponseChan: responseChan,
 	}
 
 	// Aggiunge il messaggio alla coda di messaggi, ordinata per clock (e serverID a parità di clock)
@@ -113,8 +124,11 @@ func (db *DbSequential) handleGetRequest(key string) {
 	resultMessage := db.MessageQueue.PopGetMessage()
 	if resultMessage != nil {
 		// esegue l'operazione di GET richiesta
-		db.DbStore.getEntry(resultMessage.Key)
-		fmt.Printf("\nGET: %s\n", resultMessage.Key)
+		value := db.DbStore.getEntry(resultMessage.Key)
+		// Invia il risultato tramite il canale di risposta
+		if resultMessage.ResponseChan != nil {
+			resultMessage.ResponseChan <- value
+		}
 	}
 }
 
@@ -185,28 +199,39 @@ func (db *DbSequential) sendMessage(msg utils.Message) {
 	seqNum := db.NextSeqNum.getNextSeqNum()
 	msg.SeqNum = seqNum
 
-	//Simula il ritardo di comunicazione
-	simulateDelay()
+	var wg sync.WaitGroup
 
 	for _, address := range db.Addresses {
-		conn, err := net.Dial("tcp", address.GetFullAddress())
-		if err != nil {
-			log.Fatal("Error in dialing: ", err)
-		}
+		wg.Add(1)
+		go func() {
+			//Simula il ritardo di comunicazione
+			simulateDelay()
 
-		// Codifica il messaggio in json e lo invia al server
-		encoder := json.NewEncoder(conn)
-		err = encoder.Encode(msg)
-		if err != nil {
-			log.Fatal("Error while coding message : ", err)
-			return
-		}
+			conn, err := net.Dial("tcp", address.GetFullAddress())
+			if err != nil {
+				log.Fatal("Error in dialing: ", err)
+			}
 
-		err = conn.Close()
-		if err != nil {
-			log.Fatal("Error while closing connection : ", err)
-		}
+			// Codifica il messaggio in json e lo invia al server
+			encoder := json.NewEncoder(conn)
+			err = encoder.Encode(msg)
+			if err != nil {
+				log.Fatal("Error while coding message : ", err)
+				return
+			}
+
+			err = conn.Close()
+			if err != nil {
+				log.Fatal("Error while closing connection : ", err)
+			}
+
+			wg.Done()
+		}()
 	}
+
+	// Attende che tutti il messaggio sia stato effettivamente propagato a ogni altra replica.
+	// La propagazione verso ogni altra replica avviene con un ritardo in generale differente in quando casuale
+	wg.Wait()
 }
 
 // getNextMessageID recupera l'ID del prossimo messaggio costruito e propagato dal server
@@ -313,21 +338,21 @@ func (db *DbSequential) receive(msg utils.Message) {
 		if resultMessage.Op != utils.GET {
 			db.MessageQueue.DeleteAck(resultMessage.MessageID.ID, resultMessage.MessageID.ServerId)
 		}
-		fmt.Printf("sto facendo op\n")
 		switch resultMessage.Op {
 		case utils.GET:
-			db.DbStore.getEntry(resultMessage.Key)
-			fmt.Printf("\nGET: %s\n", resultMessage.Key)
+			value := db.DbStore.getEntry(resultMessage.Key)
+			// Invia il risultato tramite il canale di risposta
+			if resultMessage.ResponseChan != nil {
+				resultMessage.ResponseChan <- value
+			}
 		case utils.PUT:
 			db.DbStore.putEntry(resultMessage.Key, resultMessage.Value)
-			fmt.Printf("\nPUT: %s %s\n", resultMessage.Key, resultMessage.Value)
 			// Iterazione sulla mappa e stampa di ogni chiave e valore
 			/*for key, value := range db.DbStore.Store {
 				fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
 			}*/
 		case utils.DELETE:
 			db.DbStore.deleteEntry(resultMessage.Key)
-			fmt.Printf("\nDELETE: %s\n", resultMessage.Key)
 			// Iterazione sulla mappa e stampa di ogni chiave e valore
 			/*for key, value := range db.DbStore.Store {
 				if len(db.DbStore.Store) == 0 {
@@ -348,8 +373,11 @@ func (db *DbSequential) receive(msg utils.Message) {
 	resultMessage = db.MessageQueue.PopGetMessage()
 	for resultMessage != nil {
 		// esegue l'operazione di GET richiesta
-		db.DbStore.getEntry(resultMessage.Key)
-		fmt.Printf("\nGET: %s\n", resultMessage.Key)
+		value := db.DbStore.getEntry(resultMessage.Key)
+		// Invia il risultato tramite il canale di risposta
+		if resultMessage.ResponseChan != nil {
+			resultMessage.ResponseChan <- value
+		}
 		resultMessage = db.MessageQueue.PopGetMessage()
 	}
 

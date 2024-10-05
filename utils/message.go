@@ -26,19 +26,19 @@ const (
 type MessageIdentifier struct {
 	ID       int `json:"id"`       // ID del messaggio univoco nella replica del db
 	ServerId int `json:"serverId"` // Identificatore del server, in cui l'ID del messaggio è univoco
-
 }
 
 // Message rappresenta struttura del messaggio di REQUEST o di ACK
 type Message struct {
-	MessageID MessageIdentifier `json:"identifier"` // Identificatore univoco del messaggio, permette di associare gli ACK alle REQUEST
-	Key       string            `json:"key"`
-	Value     string            `json:"value"`
-	Op        Operation         `json:"op"`
-	Clock     int               `json:"clock"`
-	Type      MessageType       `json:"type"`
-	ServerID  int               `json:"server_id"` // ID del processo che propaga la REQUEST o l' ACK
-	SeqNum    int               `json:"seq_num"`   // Numero di sequenza che identifica l'ordine con cui partono i messaggi da un server
+	MessageID    MessageIdentifier `json:"identifier"` // Identificatore univoco del messaggio, permette di associare gli ACK alle REQUEST
+	Key          string            `json:"key"`
+	Value        string            `json:"value"`
+	Op           Operation         `json:"op"`
+	Clock        int               `json:"clock"`
+	Type         MessageType       `json:"type"`
+	ServerID     int               `json:"server_id"` // ID del processo che propaga la REQUEST o l' ACK
+	SeqNum       int               `json:"seq_num"`   // Numero di sequenza che identifica l'ordine con cui partono i messaggi da un server
+	ResponseChan chan string       `json:"-"`
 }
 
 // MessageQueue rappresenta la coda di messaggi mantenuta da ogni server

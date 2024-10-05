@@ -3,10 +3,10 @@ package main
 import (
 	"dbService/utils"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 type VectorClock struct {
@@ -32,7 +32,12 @@ type DbCausal struct {
 
 // Get recupera il valore corrispondente a una chiave
 func (db *DbCausal) Get(args utils.Args, result *utils.Result) error {
-	db.DbStore.getEntry(args.Key)
+	value := db.DbStore.getEntry(args.Key)
+	for value == "NOT FOUND" {
+		time.Sleep(500 * time.Millisecond)
+		value = db.DbStore.getEntry(args.Key)
+	}
+	result.Value = value
 	return nil
 }
 
@@ -58,10 +63,17 @@ func (db *DbCausal) Delete(args utils.Args, result *utils.Result) error {
 }
 
 // updateVectorClockOnSend incrementa di 1 il clock del server nel clock vettoriale
-func (db *DbCausal) updateVectorClockOnSend() {
+func (db *DbCausal) updateVectorClockOnSend() []int {
 	db.Clock.mutex.Lock()
 	db.Clock.value[db.ID]++
+
+	// Crea una copia del clock vettoriale per evitare modifiche
+	clockCopy := make([]int, len(db.Clock.value))
+	copy(clockCopy, db.Clock.value)
+
 	db.Clock.mutex.Unlock()
+
+	return clockCopy
 }
 
 // updateVectorClockOnDelivery aggiorna il clock, per ogni k: V[k] = max{V[k], ts(msg)[k]}
@@ -77,14 +89,14 @@ func (db *DbCausal) updateVectorClockOnDelivery(msgClock []int) {
 func (db *DbCausal) sendUpdate(op utils.Operation, key string, value string) {
 
 	// Incrementa il clock del server di 1
-	db.updateVectorClockOnSend()
+	currentClock := db.updateVectorClockOnSend()
 
 	// costruisce un messaggio associato alla richiesta di update, associando il clock vettoriale
 	update := utils.VectorMessage{
 		Key:      key,
 		Value:    value,
 		Op:       op,
-		Clock:    db.Clock.value,
+		Clock:    currentClock,
 		ServerID: db.ID,
 	}
 
@@ -100,27 +112,29 @@ func (db *DbCausal) sendVectorMessage(msg utils.VectorMessage) {
 	seqNum := db.NextSeqNum.getNextSeqNum()
 	msg.SeqNum = seqNum
 
-	//Simula il ritardo di comunicazione
-	simulateDelay()
-
 	for _, address := range db.Addresses {
-		conn, err := net.Dial("tcp", address.GetFullAddress())
-		if err != nil {
-			log.Fatal("Error in dialing: ", err)
-		}
+		go func() {
+			//Simula il ritardo di comunicazione
+			simulateDelay()
 
-		// Codifica il messaggio in json e lo invia al server
-		encoder := json.NewEncoder(conn)
-		err = encoder.Encode(msg)
-		if err != nil {
-			log.Fatal("Error while coding message : ", err)
-			return
-		}
+			conn, err := net.Dial("tcp", address.GetFullAddress())
+			if err != nil {
+				log.Fatal("Error in dialing: ", err)
+			}
 
-		err = conn.Close()
-		if err != nil {
-			log.Fatal("Error while closing connection : ", err)
-		}
+			// Codifica il messaggio in json e lo invia al server
+			encoder := json.NewEncoder(conn)
+			err = encoder.Encode(msg)
+			if err != nil {
+				log.Fatal("Error while coding message : ", err)
+				return
+			}
+
+			err = conn.Close()
+			if err != nil {
+				log.Fatal("Error while closing connection : ", err)
+			}
+		}()
 	}
 }
 
@@ -208,17 +222,14 @@ func (db *DbCausal) DeliverMessage(msg utils.VectorMessage) {
 	switch msg.Op {
 	case utils.GET:
 		db.DbStore.getEntry(msg.Key)
-		fmt.Printf("\nGET: %s\n", msg.Key)
 	case utils.PUT:
 		db.DbStore.putEntry(msg.Key, msg.Value)
-		fmt.Printf("\nPUT: %s %s\n", msg.Key, msg.Value)
 		// Iterazione sulla mappa e stampa di ogni chiave e valore
 		/*for key, value := range db.DbStore.Store {
 			fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
 		}*/
 	case utils.DELETE:
 		db.DbStore.deleteEntry(msg.Key)
-		fmt.Printf("\nDELETE: %s\n", msg.Key)
 		// Iterazione sulla mappa e stampa di ogni chiave e valore
 		/*for key, value := range db.DbStore.Store {
 			if len(db.DbStore.Store) == 0 {

@@ -2,11 +2,15 @@ package main
 
 import (
 	"dbService/utils"
+	"fmt"
 	"github.com/joho/godotenv"
 	"log"
+	"math/rand"
 	"net/rpc"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 )
 
 type Client struct {
@@ -26,6 +30,7 @@ var (
 	BasePort         int
 	BasePortToClient int
 	ConsistencyType  string
+	Test             string
 )
 
 func init() {
@@ -40,23 +45,45 @@ func init() {
 	BasePort, _ = strconv.Atoi(os.Getenv("BASE_PORT"))
 	BasePortToClient, _ = strconv.Atoi(os.Getenv("BASE_PORT_TO_CLIENT"))
 	ConsistencyType = os.Getenv("CONSISTENCY_TYPE")
+	Test = os.Getenv("TEST")
 }
 
+// Simula l'esecuzione concorrente di molteplici client.
+// Viene controllata la corretta realizzazione della consistenza sequenziale o causale, in base al valore della variabile d'ambiente
 func main() {
-	// Simula l'esecuzione concorrente di molteplici client.
-	// Viene controllata la corretta realizzazione della consistenza sequenziale o causale, in base al valore della variabile d'ambiente
 	if ConsistencyType == "SEQUENTIAL" {
-		// simula interazione con repliche del db che garantiscono consistenza sequenziale
-		runSequentialTest()
+		// Esegue i test per la consistenza sequenziale
+		if Test == "SIMPLE" {
+			fmt.Println("Running simple sequential test...")
+			runSimpleSequentialTest()
+		} else if Test == "COMPLEX" {
+			fmt.Println("Running complex sequential test...")
+			runComplexSequentialTest()
+		} else {
+			log.Fatal("Wrong test required, please use SIMPLE or COMPLEX")
+		}
 	} else if ConsistencyType == "CAUSAL" {
-		// simula interazione con repliche del db che garantiscono consistenza causale
-		runCausalTest()
+		// Esegue i test per la consistenza causale
+		if Test == "SIMPLE" {
+			fmt.Println("Running simple causal test...")
+			runSimpleCausalTest()
+		} else if Test == "COMPLEX" {
+			fmt.Println("Running complex causal test...")
+			runComplexCausalTest()
+		} else {
+			log.Fatal("Wrong test required, please use SIMPLE or COMPLEX")
+		}
+	} else {
+		log.Fatal("Wrong consistency required, please use SEQUENTIAL or CAUSAL")
 	}
 }
 
 // LaunchRequest esegue la lista di richieste definita per ogni client
-func (client *Client) LaunchRequest() {
+func (client *Client) LaunchRequest(wg *sync.WaitGroup) {
+	defer wg.Done()
 	for _, request := range client.requests {
+		// delay random prima di richiedere l'operazione successiva del client corrente
+		randomDelay()
 		args := utils.Args{
 			Key:   request.key,
 			Value: request.value,
@@ -70,5 +97,61 @@ func (client *Client) LaunchRequest() {
 		if err != nil {
 			log.Fatal("Error while executing op: ", err)
 		}
+		if request.op == utils.GET {
+			fmt.Printf("[CLIENT %d] GET key %s value %s\n", client.ID, request.key, reply.Value)
+		}
 	}
+
+	// Attende 10 secondi così da garantire che tutte le repliche abbiano terminato di propagare i messaggi
+	time.Sleep(time.Duration(10000) * time.Millisecond)
+
+}
+
+func createClients() []*Client {
+	// Crea i client, ognuno dei quali interagisce con una diversa replica del datastore
+	var clients []*Client
+	for i := 0; i < NumReplicas; i++ {
+		// Il client si collega al server RPC
+		rpcClient, err := rpc.Dial("tcp", "localhost:"+strconv.Itoa(BasePortToClient+i))
+		if err != nil {
+			log.Fatal("Error in dialing: ", err)
+		}
+
+		fmt.Printf("Client %d connesso al server %d\n", i, BasePortToClient+i)
+		client := &Client{
+			ID:        i,
+			rpcClient: rpcClient,
+			requests:  nil,
+		}
+
+		//aggiunge il client alla lista dei client
+		clients = append(clients, client)
+	}
+	return clients
+}
+
+func launchClients(clients []*Client) {
+	// I client vengono lanciati in parallelo, ciascuno su una diversa goroutine, e vengono eseguite le rispettive richieste verso il db
+	var wg sync.WaitGroup
+	for i := 0; i < NumReplicas; i++ {
+		wg.Add(1)
+		go clients[i].LaunchRequest(&wg)
+	}
+
+	// Attende che i diversi client abbiano inviato le operazioni richieste
+	wg.Wait()
+
+	// Chiude le connessioni dei client
+	for i := 0; i < NumReplicas; i++ {
+		err := clients[i].rpcClient.Close()
+		if err != nil {
+			log.Fatal("Error while closing connection:", err)
+		}
+	}
+
+	fmt.Println("All clients completed")
+}
+
+func randomDelay() {
+	time.Sleep(time.Duration(2000+rand.Intn(4000)) * time.Millisecond) // ritardo tra 500ms e 2s
 }
