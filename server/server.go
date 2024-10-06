@@ -18,6 +18,8 @@ var (
 	BasePort         int
 	BasePortToClient int
 	ConsistencyType  string
+	BaseName         string
+	Container        bool               // Questa variabile distingue tra l'esecuzione con Docker o senza
 	TimeoutDuration  = 20 * time.Second // Durata del timeout di inattività
 )
 
@@ -32,17 +34,21 @@ func init() {
 	NumReplicas, _ = strconv.Atoi(os.Getenv("NUM_REPLICAS"))
 	BasePort, _ = strconv.Atoi(os.Getenv("BASE_PORT"))
 	BasePortToClient, _ = strconv.Atoi(os.Getenv("BASE_PORT_TO_CLIENT"))
+	BaseName = os.Getenv("BASE_NAME")
 	ConsistencyType = os.Getenv("CONSISTENCY_TYPE")
+	if os.Getenv("CONTAINER") == "YES" {
+		Container = true
+	} else {
+		Container = false
+	}
 }
 
 func main() {
-
-	// recupera da riga di comando l'indice da assegnare al server lanciato
+	// Recupera da riga di comando l'indice da assegnare al server lanciato
 	if len(os.Args) < 2 {
 		fmt.Println("Please provide an index as an argument.")
 		return
 	}
-
 	// Recupera l'indice passato da riga di comando
 	indexStr := os.Args[1]
 	serverIndex, err := strconv.Atoi(indexStr)
@@ -68,15 +74,9 @@ func main() {
 				value: 0,
 				mutex: sync.Mutex{},
 			},
-			Address: utils.ServerAddress{
-				IP:   "localhost",
-				Port: strconv.Itoa(BasePort + serverIndex),
-			},
-			Addresses: []utils.ServerAddress{},
-			AddressToClient: utils.ServerAddress{
-				IP:   "localhost",
-				Port: strconv.Itoa(BasePortToClient + serverIndex),
-			},
+			Address:            GetServerAddress(serverIndex),
+			Addresses:          []utils.ServerAddress{},
+			AddressToClient:    GetServerAddressToClient(serverIndex),
 			FIFOQueues:         make(map[int]*utils.MessageQueue),
 			ExpectedNextSeqNum: make(map[int]*NextSeqNum),
 			NextSeqNum: NextSeqNum{
@@ -98,7 +98,7 @@ func main() {
 		//Configuro gli indirizzi delle altre repliche del db
 		for i := 0; i < NumReplicas; i++ {
 			if i != serverIndex {
-				newAddress := utils.ServerAddress{IP: "localhost", Port: strconv.Itoa(BasePort + i)}
+				newAddress := GetServerAddress(i)
 				dbSequential.Addresses = append(dbSequential.Addresses, newAddress)
 			}
 		}
@@ -118,15 +118,9 @@ func main() {
 				value: make([]int, NumReplicas),
 				mutex: sync.Mutex{},
 			},
-			Address: utils.ServerAddress{
-				IP:   "localhost",
-				Port: strconv.Itoa(BasePort + serverIndex),
-			},
-			Addresses: []utils.ServerAddress{},
-			AddressToClient: utils.ServerAddress{
-				IP:   "localhost",
-				Port: strconv.Itoa(BasePortToClient + serverIndex),
-			},
+			Address:            GetServerAddress(serverIndex),
+			Addresses:          []utils.ServerAddress{},
+			AddressToClient:    GetServerAddressToClient(serverIndex),
 			FIFOQueues:         make(map[int]*utils.VectorMessageQueue),
 			ExpectedNextSeqNum: make(map[int]*NextSeqNum),
 			NextSeqNum: NextSeqNum{
@@ -148,7 +142,7 @@ func main() {
 		//Configuro gli indirizzi delle altre repliche del db
 		for i := 0; i < NumReplicas; i++ {
 			if i != serverIndex {
-				newAddress := utils.ServerAddress{IP: "localhost", Port: strconv.Itoa(BasePort + i)}
+				newAddress := GetServerAddress(i)
 				dbCausal.Addresses = append(dbCausal.Addresses, newAddress)
 			}
 		}
@@ -286,5 +280,21 @@ func startRPCServer(dataStore DataStore) {
 		// Allow RPC server to accept requests connections on the listener
 		// and serve requests for each incoming connection.
 		server.Accept(rpcListener)
+	}
+}
+
+func GetServerAddress(serverIndex int) utils.ServerAddress {
+	if Container {
+		return utils.ServerAddress{IP: BaseName + "-" + strconv.Itoa(serverIndex), Port: strconv.Itoa(BasePort)}
+	} else {
+		return utils.ServerAddress{IP: "localhost", Port: strconv.Itoa(BasePort + serverIndex)}
+	}
+}
+
+func GetServerAddressToClient(serverIndex int) utils.ServerAddress {
+	if Container {
+		return utils.ServerAddress{IP: BaseName + "-" + strconv.Itoa(serverIndex), Port: strconv.Itoa(BasePortToClient)}
+	} else {
+		return utils.ServerAddress{IP: "localhost", Port: strconv.Itoa(BasePortToClient + serverIndex)}
 	}
 }

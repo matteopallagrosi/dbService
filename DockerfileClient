@@ -9,5 +9,5 @@ RUN go mod download
 # Copia l'applicazione
 COPY . .
 
-# Compila il server
-RUN go build -o server-replica ./server
+# Compila il client
+RUN go build -o client-test ./test

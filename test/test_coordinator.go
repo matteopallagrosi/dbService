@@ -27,10 +27,11 @@ type Request struct {
 
 var (
 	NumReplicas      int
-	BasePort         int
 	BasePortToClient int
 	ConsistencyType  string
 	Test             string
+	BaseName         string
+	Container        bool
 )
 
 func init() {
@@ -42,10 +43,15 @@ func init() {
 
 	// Recupera e converte le variabili d'ambiente
 	NumReplicas, _ = strconv.Atoi(os.Getenv("NUM_REPLICAS"))
-	BasePort, _ = strconv.Atoi(os.Getenv("BASE_PORT"))
 	BasePortToClient, _ = strconv.Atoi(os.Getenv("BASE_PORT_TO_CLIENT"))
 	ConsistencyType = os.Getenv("CONSISTENCY_TYPE")
 	Test = os.Getenv("TEST")
+	BaseName = os.Getenv("BASE_NAME")
+	if os.Getenv("CONTAINER") == "YES" {
+		Container = true
+	} else {
+		Container = false
+	}
 }
 
 // Simula l'esecuzione concorrente di molteplici client.
@@ -111,13 +117,19 @@ func createClients() []*Client {
 	// Crea i client, ognuno dei quali interagisce con una diversa replica del datastore
 	var clients []*Client
 	for i := 0; i < NumReplicas; i++ {
+		var serverAddress utils.ServerAddress
+		if Container {
+			serverAddress = utils.ServerAddress{IP: BaseName + "-" + strconv.Itoa(i), Port: strconv.Itoa(BasePortToClient)}
+		} else {
+			serverAddress = utils.ServerAddress{IP: "localhost", Port: strconv.Itoa(BasePortToClient + i)}
+		}
 		// Il client si collega al server RPC
-		rpcClient, err := rpc.Dial("tcp", "localhost:"+strconv.Itoa(BasePortToClient+i))
+		rpcClient, err := rpc.Dial("tcp", serverAddress.GetFullAddress())
 		if err != nil {
 			log.Fatal("Error in dialing: ", err)
 		}
 
-		fmt.Printf("Client %d connesso al server %d\n", i, BasePortToClient+i)
+		fmt.Printf("Client %d connesso al server %s\n", i, serverAddress.GetFullAddress())
 		client := &Client{
 			ID:        i,
 			rpcClient: rpcClient,
