@@ -1,0 +1,43 @@
+version: '3'
+
+services:
+
+  server-0:
+    build:
+      context: .
+      dockerfile: DockerfileServer
+    command: ./server-replica 0
+    container_name: server-0
+
+  server-1:
+    build:
+      context: .
+      dockerfile: DockerfileServer
+    command: ./server-replica 1
+    container_name: server-1
+
+  server-2:
+    build:
+      context: .
+      dockerfile: DockerfileServer
+    command: ./server-replica 2
+    container_name: server-2
+
+  server-3:
+    build:
+      context: .
+      dockerfile: DockerfileServer
+    command: ./server-replica 3
+    container_name: server-3
+
+  client:
+    build:
+      context: .
+      dockerfile: DockerfileClient
+    command: ./client-test
+    depends_on:
+      - server-0
+      - server-1
+      - server-2
+      - server-3
+    container_name: client
