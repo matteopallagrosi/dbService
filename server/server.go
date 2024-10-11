@@ -61,7 +61,7 @@ func main() {
 
 	fmt.Printf("Starting server instance with index: %d\n", serverIndex)
 
-	//Create an instance of struct which implements dataStore interface
+	//Crea un'istanza di struct che implementa l'interfaccia DataStore
 	var dataStore DataStore
 	if ConsistencyType == "SEQUENTIAL" {
 		// crea un server con garanzie di consistenza sequenziale
@@ -97,7 +97,7 @@ func main() {
 			}
 		}
 
-		//Configuro gli indirizzi delle altre repliche del db
+		//Configura gli indirizzi delle altre repliche del db
 		for i := 0; i < NumReplicas; i++ {
 			if i != serverIndex {
 				newAddress := GetServerAddress(i)
@@ -141,7 +141,7 @@ func main() {
 			}
 		}
 
-		//Configuro gli indirizzi delle altre repliche del db
+		//Configura gli indirizzi delle altre repliche del db
 		for i := 0; i < NumReplicas; i++ {
 			if i != serverIndex {
 				newAddress := GetServerAddress(i)
@@ -198,7 +198,7 @@ func startRPCServer(dataStore DataStore) {
 				// Accetta la connessione
 				conn, err := listener.Accept()
 				if err != nil {
-					fmt.Println("Errore nell'accettare la connessione:", err)
+					fmt.Println("Error while accepting connection:", err)
 					continue
 				}
 				resetTimer()
@@ -206,16 +206,14 @@ func startRPCServer(dataStore DataStore) {
 			}
 		}(listener)
 
-		// Register a new rpc server and the struct we created above.
-		// Only structs which implement datastore interface
-		// are allowed to register themselves
+		// Registra un nuovo server RPC
 		server := rpc.NewServer()
 		err = server.RegisterName("Datastore", dataStore)
 		if err != nil {
 			log.Fatal("Format of service datastore is not correct: ", err)
 		}
 
-		// Listen for incoming TCP packets on specified port
+		// Si mette in ascolto su una specifica porta
 		rpcListener, err := net.Listen("tcp", dbSequential.AddressToClient.GetFullAddress())
 		if err != nil {
 			log.Fatal("Error while starting RPC server:", err)
@@ -229,8 +227,7 @@ func startRPCServer(dataStore DataStore) {
 			}
 		}(rpcListener)
 
-		// Allow RPC server to accept requests connections on the listener
-		// and serve requests for each incoming connection.
+		// Permette al server di accettare richieste di connessione sul Listener e serve queste richieste
 		server.Accept(rpcListener)
 
 	} else if dbCausal, ok := dataStore.(*DbCausal); ok {
@@ -248,7 +245,7 @@ func startRPCServer(dataStore DataStore) {
 				// Accetta la connessione
 				conn, err := listener.Accept()
 				if err != nil {
-					fmt.Println("Errore nell'accettare la connessione:", err)
+					fmt.Println("Error while accepting connection:", err)
 					continue
 				}
 				resetTimer()
@@ -256,16 +253,14 @@ func startRPCServer(dataStore DataStore) {
 			}
 		}(listener)
 
-		// Register a new rpc server and the struct we created above.
-		// Only structs which implement datastore interface
-		// are allowed to register themselves
+		// Registra un nuovo server RPC
 		server := rpc.NewServer()
 		err = server.RegisterName("Datastore", dataStore)
 		if err != nil {
 			log.Fatal("Format of service datastore is not correct: ", err)
 		}
 
-		// Listen for incoming TCP packets on specified port
+		// Si mette in ascolto su una specifica porta
 		rpcListener, err := net.Listen("tcp", dbCausal.AddressToClient.GetFullAddress())
 		if err != nil {
 			log.Fatal("Error while starting RPC server:", err)
@@ -279,8 +274,7 @@ func startRPCServer(dataStore DataStore) {
 			}
 		}(rpcListener)
 
-		// Allow RPC server to accept requests connections on the listener
-		// and serve requests for each incoming connection.
+		// Permette al server di accettare richieste di connessione sul Listener e serve queste richieste
 		server.Accept(rpcListener)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"dbService/utils"
 )
 
-// runSimpleCausalTest esegue test per verificare il rispetto della consistenza casuale.
+// runSimpleCausalTest esegue test per verificare il rispetto della consistenza causale.
 // Il test simula il comportamento di 4 client che richiedono operazioni a diverse repliche del db
 func runSimpleCausalTest() {
 	// Crea i client, ognuno dei quali interagisce con una diversa replica del datastore
@@ -52,7 +52,7 @@ func runSimpleCausalTest() {
 	launchClients(clients)
 }
 
-// runComplexCausalTest esegue test per verificare il rispetto della consistenza casuale.
+// runComplexCausalTest esegue test per verificare il rispetto della consistenza causale.
 // Richiede l'esecuzione di molteplici scritture in relazione causa-effetto
 func runComplexCausalTest() {
 	clients := createClients()

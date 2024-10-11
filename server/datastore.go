@@ -100,7 +100,7 @@ func (db *DbStore) printDbStore() {
 
 // generateLine genera una riga di trattini della lunghezza desiderata
 func generateLine(length int) string {
-	// Crea un slice di byte di lunghezza specificata, ogni elemento è '-'
+	// Crea uno slice di byte di lunghezza specificata, ogni elemento è '-'
 	line := make([]byte, length)
 	for i := range line {
 		line[i] = '-'

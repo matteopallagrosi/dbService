@@ -224,19 +224,7 @@ func (db *DbCausal) DeliverMessage(msg utils.VectorMessage) {
 		db.DbStore.getEntry(msg.Key)
 	case utils.PUT:
 		db.DbStore.putEntry(msg.Key, msg.Value)
-		// Iterazione sulla mappa e stampa di ogni chiave e valore
-		/*for key, value := range db.DbStore.Store {
-			fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
-		}*/
 	case utils.DELETE:
 		db.DbStore.deleteEntry(msg.Key)
-		// Iterazione sulla mappa e stampa di ogni chiave e valore
-		/*for key, value := range db.DbStore.Store {
-			if len(db.DbStore.Store) == 0 {
-				println("store vuoto")
-			} else {
-				fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
-			}
-		}*/
 	}
 }

@@ -75,7 +75,6 @@ func (db *DbSequential) Delete(args utils.Args, result *utils.Result) error {
 func (db *DbSequential) updateClockOnSend() {
 	db.Clock.mutex.Lock()
 	db.Clock.value++
-	//fmt.Printf("Incremento il clock di 1 sulla send, ora è %d\n", db.Clock.value)
 	db.Clock.mutex.Unlock()
 }
 
@@ -87,7 +86,6 @@ func (db *DbSequential) updateClockOnReceive(msgClock int) {
 		db.Clock.value = msgClock
 	}
 	db.Clock.value++
-	//fmt.Printf("Aggiorno il clock sulla ricezione, ora è %d\n", db.Clock.value)
 	db.Clock.mutex.Unlock()
 }
 
@@ -314,10 +312,6 @@ func (db *DbSequential) handleConnection(conn net.Conn) {
 
 // receive gestisce la ricezione di messaggi dalle altre repliche (che possono essere REQUEST o ACK)
 func (db *DbSequential) receive(msg utils.Message) {
-	// Stampa il messaggio ricevuto
-	//fmt.Printf("\nRicevuto:\nID = %d\nDa = %d\nKey = %s\nValue = %s\nOperation = %s\nClock = %d\nType = %s\nServerID = %d\n",
-	//	msg.MessageID.ID, msg.MessageID.ServerId, msg.Key, msg.Value, msg.Op, msg.Clock, msg.Type, msg.ServerID)
-
 	// aggiorna il clock sulla ricezione
 	db.updateClockOnReceive(msg.Clock)
 
@@ -347,24 +341,9 @@ func (db *DbSequential) receive(msg utils.Message) {
 			}
 		case utils.PUT:
 			db.DbStore.putEntry(resultMessage.Key, resultMessage.Value)
-			// Iterazione sulla mappa e stampa di ogni chiave e valore
-			/*for key, value := range db.DbStore.Store {
-				fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
-			}*/
 		case utils.DELETE:
 			db.DbStore.deleteEntry(resultMessage.Key)
-			// Iterazione sulla mappa e stampa di ogni chiave e valore
-			/*for key, value := range db.DbStore.Store {
-				if len(db.DbStore.Store) == 0 {
-					println("store vuoto")
-				} else {
-					fmt.Printf("Chiave: %s, Valore: %s\n", key, value)
-				}
-			}*/
 		}
-		//db.MessageQueue.PrintQueue()
-
-		//db.MessageQueue.PrintQueue()
 	}
 
 	// Controlla che in coda ci sia un messaggio di GET locale come messaggio successivo che può essere processato

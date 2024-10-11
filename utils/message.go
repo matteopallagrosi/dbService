@@ -17,7 +17,7 @@ const (
 	DELETE Operation = "Delete"
 )
 
-// Operazioni che possono essere richieste al server
+// Tipologia dei messaggi
 const (
 	REQUEST MessageType = "REQUEST"
 	ACK     MessageType = "ACK"
@@ -100,7 +100,7 @@ func (mq *MessageQueue) PopMessage(idRequester int, numReplicas int) *Message {
 
 	// Verifica se abbiamo trovato almeno un messaggio con clock maggiore per tutti i server diversi
 	if len(serverIDFound) == (numReplicas - 1) {
-		// Rimuovi il messaggio in testa
+		// Rimuove il messaggio in testa
 		mq.messages = mq.messages[1:]
 
 		return &headMessage
@@ -155,14 +155,14 @@ func (mq *MessageQueue) DeleteAck(messageId int, serverId int) {
 	mq.messages = filteredMessages
 }
 
-// InsertFIFOMessage inserisce il messaggio in una coda ordinata per numero si sequenza
+// InsertFIFOMessage inserisce il messaggio in una coda ordinata per numero di sequenza
 // Questo permette di garantire comunicazione FIFO order per ogni coppia di server i-j
 func (mq *MessageQueue) InsertFIFOMessage(msg Message) {
 	mq.mutex.Lock()
 	defer mq.mutex.Unlock()
 	mq.messages = append(mq.messages, msg)
 
-	// Ordinare la coda prima per numero di sequenza
+	// Ordina la coda per numero di sequenza
 	sort.Slice(mq.messages, func(i, j int) bool {
 		return mq.messages[i].SeqNum < mq.messages[j].SeqNum
 	})

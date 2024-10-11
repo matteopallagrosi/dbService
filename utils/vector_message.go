@@ -78,7 +78,7 @@ func (mq *VectorMessageQueue) InsertFIFOMessage(msg VectorMessage) {
 	defer mq.mutex.Unlock()
 	mq.messages = append(mq.messages, msg)
 
-	// Ordinare la coda prima per numero di sequenza
+	// Ordina la coda per numero di sequenza
 	sort.Slice(mq.messages, func(i, j int) bool {
 		return mq.messages[i].SeqNum < mq.messages[j].SeqNum
 	})

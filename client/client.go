@@ -83,7 +83,7 @@ func main() {
 				log.Fatal("Error while executing GET:", err)
 			}
 
-			fmt.Print("Risultato: " + reply.Value)
+			fmt.Print("Risultato: " + reply.Value + "\n")
 
 		case 2: // PUT
 			fmt.Print("Inserisci la chiave: ")
