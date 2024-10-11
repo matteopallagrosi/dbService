@@ -4,30 +4,36 @@ import (
 	"bufio"
 	"dbService/utils"
 	"fmt"
+	"github.com/joho/godotenv"
 	"log"
+	"math/rand"
 	"net/rpc"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
-const BasePort = 8080
+var (
+	NumReplicas int
+	BasePort    int
+)
+
+func init() {
+	// Carica le variabili d'ambiente dal file .env
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	// Recupera e converte le variabili d'ambiente
+	NumReplicas, _ = strconv.Atoi(os.Getenv("NUM_REPLICAS"))
+	BasePort, _ = strconv.Atoi(os.Getenv("BASE_PORT_TO_CLIENT"))
+}
 
 func main() {
-	// recupera da riga di comando l'indice del server da contattare
-	if len(os.Args) < 2 {
-		fmt.Println("Please provide an index as an argument.")
-		return
-	}
 
-	// Recupera l'indice passato da riga di comando
-	indexStr := os.Args[1]
-	serverIndex, err := strconv.Atoi(indexStr)
-	if err != nil {
-		fmt.Println("Invalid index:", indexStr)
-		return
-	}
-
+	serverIndex := GetRandomIndex()
 	fmt.Printf("Connecting to server: %d\n", BasePort+serverIndex)
 
 	// Connessione al server RPC
@@ -116,4 +122,11 @@ func main() {
 			fmt.Println("Scelta non valida, riprova.")
 		}
 	}
+}
+
+// GetRandomIndex ritorna un indice casuale tra 0 e NumReplicas - 1 (inclusi)
+func GetRandomIndex() int {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return r.Intn(NumReplicas)
+
 }

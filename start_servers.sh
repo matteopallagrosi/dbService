@@ -14,11 +14,19 @@ fi
 
 # Avviare le repliche in base al valore di NUM_REPLICAS
 for ((i=0; i<NUM_REPLICAS; i++)); do
-  echo "Starting server replica with index $i..."
+  echo "Starting server replica with index $i in a new terminal..."
 
-  # Lancia ogni replica in background con l'indice passato da riga di comando
-  go run ./server $i &
+  # Lancia ogni replica in una nuova finestra del terminale
+  gnome-terminal -- bash -c "go run ./server $i; exec bash" &
 
 done
 
 echo "Started $NUM_REPLICAS replicas."
+
+# Attende 5 secondi per garantire che tutti i server siano attivi
+echo "Waiting for servers to be ready..."
+sleep 5
+
+# Avvia il client in modalità interattiva dopo aver avviato i server
+echo "Starting client..."
+go run ./client

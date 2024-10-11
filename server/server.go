@@ -19,8 +19,8 @@ var (
 	BasePortToClient int
 	ConsistencyType  string
 	BaseName         string
-	Container        bool               // Questa variabile distingue tra l'esecuzione con Docker o senza
-	TimeoutDuration  = 20 * time.Second // Durata del timeout di inattività
+	Container        bool          // Questa variabile distingue tra l'esecuzione con Docker o senza
+	TimeoutDuration  time.Duration // Durata del timeout di inattività
 )
 
 func init() {
@@ -35,6 +35,8 @@ func init() {
 	BasePort, _ = strconv.Atoi(os.Getenv("BASE_PORT"))
 	BasePortToClient, _ = strconv.Atoi(os.Getenv("BASE_PORT_TO_CLIENT"))
 	BaseName = os.Getenv("BASE_NAME")
+	Timeout, err := strconv.Atoi(os.Getenv("TIMEOUT"))
+	TimeoutDuration = time.Duration(Timeout) * time.Second
 	ConsistencyType = os.Getenv("CONSISTENCY_TYPE")
 	if os.Getenv("CONTAINER") == "YES" {
 		Container = true
