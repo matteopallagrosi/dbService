@@ -47,5 +47,5 @@ Tali variabili sono indicate di seguito nel dettaglio:
 - `BASE_NAME`: nome base di ogni replica, che una volta istanziata assume come nome `BASE_NAME-<index>`, con index che assume valore univoco tra 0 e NUM_REPLICAS. BASE_NAME deve essere consistente con il nome scelto per i container nel docker compose.
 - `TIMEOUT`: intervallo di tempo di inattività oltre il quale viene effettuato lo shutdown delle repliche, in assenza di messaggi propagati. Ogni volta che una replica deve processare qualche messaggio, il timer viene resettato. Utilizzato per terminare le repliche una volta completati i test.
 - `CONSISTENCY_TYPE`: tipologia di consistenza da garantire nell'interazione con le repliche dello store, può assumere valore `SEQUENTIAL` o `CAUSAL`.
-- `TEST`: tipologia di test da eseguire. Ciascun tipo di consistenza può essere testato con un test `SIMPLE` oppure `COMPLEX.`
+- `TEST`: tipologia di test da eseguire. Ciascun tipo di consistenza può essere testato con un test `SIMPLE` oppure `COMPLEX`.
 - `CONTAINER`: utilizzo dei container in caso di `YES`, oppure esecuzione in locale se pari a `NO`.
